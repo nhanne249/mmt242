@@ -1,5 +1,12 @@
 # Bài Tập Lớn Mạng Máy Tính
 
+## Cách Cài Đặt Các Thư Viện Yêu Cầu
+Trước khi chạy chương trình, hãy đảm bảo rằng bạn đã cài đặt đầy đủ các thư viện yêu cầu. Sử dụng lệnh sau để cài đặt:
+```bash
+pip install -r requirements.txt
+```
+Lệnh này sẽ tự động cài đặt tất cả các thư viện cần thiết được liệt kê trong file `requirements.txt`.
+
 ## Cách Chạy Server
 Để khởi động server, sử dụng lệnh sau:
 ```bash
