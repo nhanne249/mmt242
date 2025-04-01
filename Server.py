@@ -13,8 +13,15 @@ import socket
 
 app = Flask(__name__)
 
+@app.before_request
+def validate_json():
+    """Ensure all incoming requests have valid JSON."""
+    if request.method in ['POST', 'PUT']:
+        if not request.is_json:
+            return jsonify({"error": "Invalid JSON format"}), 400
+
 class PeerTracker:
-    def __init__(self, port=1108):
+    def __init__(self, port=8000):
         self.config = DefaultConfig()
         self.port = port
         self.peers = {}
@@ -53,32 +60,49 @@ tracker = PeerTracker()
 
 @app.route("/heartbeat", methods=["POST"])
 def heartbeat():
-    data = request.json
-    peer_ip = request.remote_addr
-    peer_port = data.get("port")
-    peer_key = (peer_ip, peer_port)
-    if peer_key in tracker.peers:
-        tracker.peers[peer_key]['last_heartbeat'] = time.time()
-        tracker.log_message(f"Heartbeat received from {peer_key}")
-        return jsonify({"message": "Heartbeat received"}), 200
-    else:
-        tracker.log_error(f"Received heartbeat from unregistered peer: {peer_key}")
-        return jsonify({"error": "Peer not registered"}), 400
+    try:
+        data = request.get_json(force=True)
+        peer_ip = request.remote_addr
+        peer_port = data.get("port")
+        peer_key = (peer_ip, peer_port)
+
+        if peer_key in tracker.peers:
+            tracker.peers[peer_key]['last_heartbeat'] = time.time()
+            tracker.log_message(f"Heartbeat received from {peer_key}")
+            return jsonify({"message": "Heartbeat received"}), 200
+        else:
+            tracker.log_error(f"Received heartbeat from unregistered peer: {peer_key}")
+            return jsonify({"error": "Peer not registered"}), 400
+    except Exception as e:
+        tracker.log_error(f"Error processing /heartbeat: {e}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @app.route("/register", methods=["POST"])
 def register():
-    data = request.json
-    peer_ip = request.remote_addr
-    peer_port = data.get("port")
-    peer_key = (peer_ip, peer_port)
-    tracker.peers[peer_key] = {
-        'status': 'idle',
-        'port': peer_port,
-        'files': data.get('files', []),
-        'last_heartbeat': time.time()
-    }
-    tracker.log_message(f"PEER {peer_key} registered with files: {data.get('files', [])}")
-    return jsonify({"message": "Peer registered successfully"}), 200
+    try:
+        data = request.get_json(force=True)  # Đảm bảo luôn parse JSON
+        if not data:
+            tracker.log_error("Invalid JSON format in /register request.")
+            return jsonify({"error": "Invalid JSON format"}), 400
+
+        peer_ip = request.remote_addr
+        peer_port = data.get("port")
+        if not peer_port:
+            tracker.log_error("Missing 'port' in /register request.")
+            return jsonify({"error": "Missing 'port' parameter"}), 400
+
+        peer_key = (peer_ip, peer_port)
+        tracker.peers[peer_key] = {
+            'status': 'idle',
+            'port': peer_port,
+            'files': data.get('files', []),
+            'last_heartbeat': time.time()
+        }
+        tracker.log_message(f"PEER {peer_key} registered with files: {data.get('files', [])}")
+        return jsonify({"message": "Peer registered successfully"}), 200
+    except Exception as e:
+        tracker.log_error(f"Error processing /register: {e}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @app.route("/get_n_idle_peers", methods=["POST"])
 def get_n_idle_peers():
@@ -94,22 +118,43 @@ def get_n_idle_peers():
 
 @app.route("/get_n_file_idle_peers", methods=["POST"])
 def get_n_file_idle_peers():
-    data = request.json
-    file_names = data.get("file_names")
-    peer_ip = request.remote_addr
-    peer_port = data.get("peer_port")
-    tracker.log_message(f"Received request for N idle peers with file: {file_names}")
-    
-    file_peers = []
-    for file_name in file_names:
-        for peer, info in tracker.peers.items():
-            if file_name in info['files'] and info['status'] == 'idle' and peer != (peer_ip, peer_port):
-                file_peers.append({"file_name": file_name, "peer": peer})
-    
-    if file_peers:
-        return jsonify({"type": "PEERS_AVAILABLE", "file_peer": file_peers}), 200
-    else:
-        return jsonify({"type": "NOT_ENOUGH_IDLE_PEERS"}), 200
+    try:
+        data = request.json
+        if not data:
+            tracker.log_error("Invalid JSON format in /get_n_file_idle_peers request.")
+            return jsonify({"error": "Invalid JSON format"}), 400
+
+        file_names = data.get("file_names", [])
+        peer_ip = request.remote_addr
+        peer_port = data.get("peer_port")
+        if not peer_port:
+            tracker.log_error("Missing 'peer_port' in /get_n_file_idle_peers request.")
+            return jsonify({"error": "Missing 'peer_port' parameter"}), 400
+
+        tracker.log_message(f"Received request for N idle peers with file: {file_names}")
+        
+        file_peers = []
+        file_sizes = {}
+        for file_name in file_names:
+            for peer, info in tracker.peers.items():
+                # Ensure peer is idle and not the requesting peer
+                if file_name in info['files'] and info['status'] == 'idle' and peer != (peer_ip, peer_port):
+                    file_peers.append((file_name, {"ip": peer[0], "port": peer[1]}))
+                    file_path = os.path.join("uploaded", file_name)
+                    if os.path.exists(file_path):
+                        file_sizes[file_name] = os.path.getsize(file_path)
+                    else:
+                        tracker.log_error(f"File {file_name} not found in uploaded directory.")
+        
+        if file_peers:
+            tracker.log_message(f"Returning peers for files: {file_peers}")
+            return jsonify({"type": "PEERS_AVAILABLE", "file_peer": file_peers, "file_sizes": file_sizes}), 200
+        else:
+            tracker.log_message("No idle peers with the requested files.")
+            return jsonify({"type": "NO_PEERS_AVAILABLE"}), 200
+    except Exception as e:
+        tracker.log_error(f"Error processing /get_n_file_idle_peers: {e}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @app.route("/complete_transfer", methods=["POST"])
 def complete_transfer():
@@ -124,6 +169,7 @@ def complete_transfer():
         return jsonify({"error": "Peer not found"}), 404
 
 websocket_peers = set()
+websocket_server_instance = None  # Global variable to store the WebSocket server instance
 
 async def websocket_handler(websocket, path):
     websocket_peers.add(websocket)
@@ -137,6 +183,30 @@ async def websocket_handler(websocket, path):
     finally:
         websocket_peers.remove(websocket)
 
+def start_websocket_server():
+    global websocket_server_instance
+
+    async def run_server(port=6229):
+        global websocket_server_instance
+        while is_port_in_use(port):  # Check if port is in use
+            print(f"Port {port} is in use. Retrying with a different port...")
+            port += 1
+            if port > 6300:  # Limit the port range
+                raise RuntimeError("No available ports for the WebSocket server.")
+        try:
+            websocket_server_instance = await websockets.serve(websocket_handler, "0.0.0.0", port)
+            print(f"WebSocket server started on ws://0.0.0.0:{port}")
+            await websocket_server_instance.wait_closed()
+        except Exception as e:
+            print(f"Error starting WebSocket server: {e}")
+
+def stop_websocket_server():
+    global websocket_server_instance
+    if websocket_server_instance:
+        print("Stopping WebSocket server...")
+        websocket_server_instance.close()
+        websocket_server_instance = None
+
 def start_inactive_peer_removal():
     while True:
         tracker.remove_inactive_peers()
@@ -148,8 +218,12 @@ if not os.path.exists("downloaded"):
 if not os.path.exists("uploaded"):
     os.makedirs("uploaded")
 
+def is_port_in_use(port):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(('localhost', port)) == 0
+
 class PeerFileReceiver:
-    def __init__(self, host="0.0.0.0", port=6000, store_folder="store"):
+    def __init__(self, host="0.0.0.0", port=6124, store_folder="store"):
         self.host = host
         self.port = port
         self.store_folder = store_folder
@@ -157,14 +231,22 @@ class PeerFileReceiver:
             os.makedirs(store_folder)
 
     def start(self):
-        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server_socket.bind((self.host, self.port))
-        server_socket.listen(5)
-        print(f"File receiver listening on {self.host}:{self.port} and saving files to {self.store_folder}")
-        while True:
-            client_socket, addr = server_socket.accept()
-            print(f"Connection accepted from {addr}")
-            threading.Thread(target=self._handle_client, args=(client_socket, addr)).start()
+        while is_port_in_use(self.port):  # Check if port is in use
+            print(f"Port {self.port} is in use. Retrying with a different port...")
+            self.port += 1
+            if self.port > 6200:  # Limit the port range
+                raise RuntimeError("No available ports for the file receiver.")
+        try:
+            server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            server_socket.bind((self.host, self.port))
+            server_socket.listen(5)
+            print(f"File receiver listening on {self.host}:{self.port} and saving files to {self.store_folder}")
+            while True:
+                client_socket, addr = server_socket.accept()
+                print(f"Connection accepted from {addr}")
+                threading.Thread(target=self._handle_client, args=(client_socket, addr)).start()
+        except Exception as e:
+            print(f"Error starting file receiver: {e}")
 
     def _handle_client(self, client_socket, addr):
         try:
@@ -192,21 +274,11 @@ class PeerFileReceiver:
         finally:
             client_socket.close()
 
-# Start WebSocket server
-def start_websocket_server():
-    loop = asyncio.new_event_loop()  # Create a new event loop
-    asyncio.set_event_loop(loop)
-    try:
-        server = websockets.serve(websocket_handler, "0.0.0.0", 8765)
-        loop.run_until_complete(server)  # Start the WebSocket server
-        loop.run_forever()
-    except Exception as e:
-        print(f"Error in WebSocket server: {e}")
-    finally:
-        loop.close()
-
 if __name__ == "__main__":
-    threading.Thread(target=start_inactive_peer_removal, daemon=True).start()
-    threading.Thread(target=start_websocket_server, daemon=True).start()
-    threading.Thread(target=PeerFileReceiver().start, daemon=True).start()  # Start file receiver
-    app.run(host="0.0.0.0", port=1108, debug=True)
+    try:
+        threading.Thread(target=start_inactive_peer_removal, daemon=True).start()
+        threading.Thread(target=PeerFileReceiver().start, daemon=True).start()  # Start file receiver
+        threading.Thread(target=start_websocket_server, daemon=True).start()  # Run WebSocket server in a separate thread
+        app.run(host="0.0.0.0", port=1108, debug=False, use_reloader=False)  # Disable debug mode
+    except KeyboardInterrupt:
+        stop_websocket_server()  # Ensure WebSocket server is stopped on exit

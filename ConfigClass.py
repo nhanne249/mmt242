@@ -32,13 +32,13 @@ class BaseConfig(ABC):
 
 class DefaultConfig(BaseConfig):
     def client_directory(self):
-        return "box/data"
+        return "uploaded"
     
     def message_size(self):
         return 1024 # 1KB
     
     def meta_file_path(self):
-        return "box/meta.torrent.json"
+        return "meta.torrent.json"
     
     def piece_size(self):
         return 1024 # 1KB
@@ -47,7 +47,7 @@ class DefaultConfig(BaseConfig):
         return 1024
     
     def hash_file_path(self) -> str:
-        return "box/magnet.json"
+        return "magnet.json"
     
     def meta_path(self) -> str:
-        return "box/meta/"
+        return "data/meta/"

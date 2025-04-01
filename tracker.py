@@ -40,5 +40,24 @@ def get_peers():
 def list_files():
     return jsonify({"tracked_files": list(files.keys())}), 200
 
+# Update peer status
+@app.route("/update_status", methods=["POST"])
+def update_status():
+    data = request.json
+    ip = data.get("ip")
+    port = data.get("port")
+    status = data.get("status")
+
+    if not ip or not port or not status:
+        return jsonify({"error": "Missing parameters"}), 400
+
+    for file, peers in files.items():
+        for peer in peers:
+            if peer["ip"] == ip and peer["port"] == port:
+                peer["status"] = status
+                return jsonify({"message": "Status updated successfully"}), 200
+
+    return jsonify({"error": "Peer not found"}), 404
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000, debug=True)  # Run on port 8000

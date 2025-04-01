@@ -3,6 +3,10 @@ import threading
 import logging
 import os
 
+def is_port_in_use(port):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(('localhost', port)) == 0
+
 class SeedingPeer:
     def __init__(self, host, port, uploaded, piece_size=1024):
         self.host = host
@@ -25,6 +29,12 @@ class SeedingPeer:
         
     def start(self):
         self.running = True
+        while is_port_in_use(self.port):  # Check if port is in use
+            print(f"Port {self.port} is in use. Retrying with a different port...")
+            self.port += 1
+            if self.port > 65000:  # Limit the port range
+                raise RuntimeError("No available ports for the seeding peer.")
+
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         

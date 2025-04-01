@@ -8,12 +8,16 @@ from threading import Thread
 
 async def run_tracker():
     """Run the tracker server."""
-    tracker = PeerTracker(port=1108)
-    await tracker.start()
+    try:
+        tracker = PeerTracker(port=1108)
+        print(f"{Fore.GREEN}[TRACKER]{Style.RESET_ALL} Tracker is starting on port 1108...")
+        await tracker.start()
+    except Exception as e:
+        print(f"{Fore.RED}[TRACKER]{Style.RESET_ALL} Tracker failed to start: {e}")
 
-async def run_peer(peer_ip, peer_port, peer_name, files, tracker_ip='127.0.0.1', tracker_port=1108, request_files=None):
+async def run_peer(peer_port, peer_name, files, tracker_ip='127.0.0.1', tracker_port=1108, request_files=None):
     """Run a peer client that registers with the tracker, holds files, and optionally requests files."""
-    client = PeerClient(tracker_ip, tracker_port, peer_port, files, peer_name=peer_name)
+    client = PeerClient(tracker_ip, tracker_port, peer_port, files, peer_name=peer_name, request_files=request_files)
 
     print(f"{Fore.YELLOW}[{peer_name}]{Style.RESET_ALL} Starting and connecting to tracker...")
     await client.connect_to_tracker()
@@ -21,17 +25,13 @@ async def run_peer(peer_ip, peer_port, peer_name, files, tracker_ip='127.0.0.1',
     if request_files:
         await asyncio.sleep(3)  # Delay to simulate idle time
         print(f"{Fore.YELLOW}[{peer_name}]{Style.RESET_ALL} Asking tracker for peers to request files from...")
-        receive = await client.get_n_file_idle_peers(request_files)
-        print(f'{Fore.YELLOW}[MAIN]{Style.RESET_ALL} Gathering...')
-        available_peers = receive.get('file_peer', [])
-        file_sizes = receive.get('file_sizes', [])
-        
-        async def task_runner(file_name, peer):
-            print(f'{Fore.YELLOW}[MAIN]{Style.RESET_ALL} Available: {file_name}: {peer}')
-            task = client.request_file(peer, file_name, file_sizes[file_name]['file_size'])
-            await task
-        
-        await asyncio.gather(*[asyncio.create_task(task_runner(file_name, peer)) for file_name, peer in available_peers])
+        response = await client.get_n_file_idle_peers(request_files)
+        if response:
+            file_peers = response.get('file_peer', [])
+            file_sizes = response.get('file_sizes', {})
+            for file_name, peer in file_peers:
+                peer_ip, peer_port = peer
+                await client.request_file(peer_ip, file_name, file_sizes[file_name]['file_size'])
 
 async def run_peer_thread(peer_ip, peer_port, peer_name, files, tracker_ip='127.0.0.1', tracker_port=1108, request_files=None):
     """Run a peer client that registers with the tracker, holds files, and optionally requests files."""
@@ -71,7 +71,7 @@ async def main():
 
     # Create peer tasks
     peer_a_task = asyncio.create_task(run_peer('127.0.0.1', 1109, 'PEER A', peer_a_files, tracker_ip='127.0.0.1'))
-    peer_b_task = asyncio.create_task(run_peer('127.0.0.1', 1110, 'PEER B', peer_b_files))
+    peer_b_task = asyncio.create_task(run_peer('127.0.0.1', 1110, 'PEER B', peer_b_files, request_files=['fileA1.txt']))
     peer_c_task = asyncio.create_task(run_peer('127.0.0.1', 1111, 'PEER C', peer_c_files, request_files=['fileA1.txt', 'fileB1.txt', 'fileD1.txt']))
     peer_d_task = asyncio.create_task(run_peer('127.0.0.1', 1112, 'PEER D', peer_d_files, request_files=['fileA1.txt', 'fileB1.txt']))
 
@@ -88,7 +88,7 @@ def main_thread():
 
     # Create peer tasks
     peer_a_task = run_peer('127.0.0.1', 1109, 'PEER A', peer_a_files)
-    peer_b_task = run_peer('127.0.0.1', 1110, 'PEER B', peer_b_files)
+    peer_b_task = run_peer('127.0.0.1', 1110, 'PEER B', peer_b_files, request_files=['fileA1.txt'])
     peer_c_task = run_peer('127.0.0.1', 1111, 'PEER C', peer_c_files, request_files=['fileA1.txt', 'fileB1.txt', 'fileD1.txt'])
     peer_d_task = run_peer('127.0.0.1', 1112, 'PEER D', peer_d_files, request_files=['fileA1.txt', 'fileB1.txt'])
     # Run the tracker and peers parallelly

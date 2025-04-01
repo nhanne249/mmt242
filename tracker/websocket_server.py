@@ -14,7 +14,7 @@ async def handle_peer(websocket, path):
             elif data.get("type") == "ERROR":
                 await websocket.send(json.dumps({"type": "ERROR", "message": data.get("message")}))
     except websockets.ConnectionClosed:
-        pass
+        print(f"Peer disconnected: {websocket.remote_address}")
     finally:
         connected_peers.remove(websocket)
 
