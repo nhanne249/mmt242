@@ -9,6 +9,7 @@ import asyncio
 import websockets
 import json
 import os
+import socket
 
 app = Flask(__name__)
 
@@ -147,6 +148,50 @@ if not os.path.exists("downloaded"):
 if not os.path.exists("uploaded"):
     os.makedirs("uploaded")
 
+class PeerFileReceiver:
+    def __init__(self, host="0.0.0.0", port=6000, store_folder="store"):
+        self.host = host
+        self.port = port
+        self.store_folder = store_folder
+        if not os.path.exists(store_folder):
+            os.makedirs(store_folder)
+
+    def start(self):
+        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_socket.bind((self.host, self.port))
+        server_socket.listen(5)
+        print(f"File receiver listening on {self.host}:{self.port} and saving files to {self.store_folder}")
+        while True:
+            client_socket, addr = server_socket.accept()
+            print(f"Connection accepted from {addr}")
+            threading.Thread(target=self._handle_client, args=(client_socket, addr)).start()
+
+    def _handle_client(self, client_socket, addr):
+        try:
+            # Receive the file name (terminated by a newline)
+            file_name = ""
+            while True:
+                char = client_socket.recv(1).decode("utf-8")
+                if char == "\n":  # End of file name
+                    break
+                file_name += char
+
+            print(f"Receiving file: {file_name} from {addr}")
+            file_path = os.path.join(self.store_folder, file_name)
+
+            # Receive the file content and save it
+            with open(file_path, "wb") as f:
+                while True:
+                    data = client_socket.recv(1024)
+                    if not data:
+                        break
+                    f.write(data)
+            print(f"File {file_name} saved to {self.store_folder}")
+        except Exception as e:
+            print(f"Error receiving file from {addr}: {e}")
+        finally:
+            client_socket.close()
+
 # Start WebSocket server
 def start_websocket_server():
     loop = asyncio.new_event_loop()  # Create a new event loop
@@ -163,4 +208,5 @@ def start_websocket_server():
 if __name__ == "__main__":
     threading.Thread(target=start_inactive_peer_removal, daemon=True).start()
     threading.Thread(target=start_websocket_server, daemon=True).start()
+    threading.Thread(target=PeerFileReceiver().start, daemon=True).start()  # Start file receiver
     app.run(host="0.0.0.0", port=1108, debug=True)

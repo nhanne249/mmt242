@@ -4,10 +4,10 @@ import logging
 import os
 
 class SeedingPeer:
-    def __init__(self, host, port, shared_files, piece_size=1024):
+    def __init__(self, host, port, uploaded, piece_size=1024):
         self.host = host
         self.port = port
-        self.shared_files = shared_files
+        self.uploaded = uploaded
         self.piece_size = piece_size
         self.running = False
         self.server_socket = None
@@ -91,11 +91,7 @@ class SeedingPeer:
             self.logger.info(f"Closed connection with {client_address}")
             
     def send_piece(self, client_socket, file_id, piece_index):
-        if file_id not in self.shared_files:
-            client_socket.sendall(b"ERROR:FILE_NOT_FOUND")
-            return
-            
-        file_path = self.shared_files[file_id]
+        file_path = os.path.join("uploaded", file_id)
         
         if not os.path.exists(file_path):
             client_socket.sendall(b"ERROR:FILE_NOT_FOUND")
@@ -122,16 +118,39 @@ class SeedingPeer:
         except Exception as e:
             client_socket.sendall(b"ERROR:INTERNAL_ERROR")
 
+    def send_file_to_receiver(self, file_name, receiver_host="127.0.0.1", receiver_port=6000):
+        """Send a file to the PeerFileReceiver."""
+        file_path = os.path.join("uploaded", file_name)
+        if not os.path.exists(file_path):
+            self.logger.error(f"File not found: {file_path}")
+            return
+
+        try:
+            with socket.create_connection((receiver_host, receiver_port)) as sock:
+                # Send file name followed by a newline as a delimiter
+                sock.sendall(f"{file_name}\n".encode("utf-8"))
+                with open(file_path, "rb") as f:
+                    while chunk := f.read(1024):
+                        sock.sendall(chunk)
+            self.logger.info(f"File {file_name} sent to {receiver_host}:{receiver_port}")
+        except Exception as e:
+            self.logger.error(f"Failed to send file {file_name} to receiver: {e}")
+
 
 if __name__ == "__main__":
-    shared_files = {
-        "file1": "shared_file_1.txt",
-        "file2": "shared_file_2.bin"
+    uploaded = {
+        "file1": "uploaded/fileA1.txt",
+        "file2": "uploaded/fileA2.txt"
     }
     
-    peer = SeedingPeer("0.0.0.0", 5000, shared_files)
+    peer = SeedingPeer("0.0.0.0", 5000, uploaded)
     
     try:
-        peer.start()
+        # Start the seeding peer in a separate thread
+        threading.Thread(target=peer.start, daemon=True).start()
+
+        # Send files to PeerFileReceiver
+        for file_name in uploaded.values():
+            peer.send_file_to_receiver(os.path.basename(file_name))
     except KeyboardInterrupt:
         peer.stop()

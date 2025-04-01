@@ -1,5 +1,5 @@
 import threading
-from Server import app, start_websocket_server, start_inactive_peer_removal
+from Server import app, start_websocket_server, start_inactive_peer_removal, PeerFileReceiver
 
 def run_tracker():
     # Start the WebSocket server in a separate thread
@@ -7,6 +7,9 @@ def run_tracker():
 
     # Start the periodic inactive peer removal task
     threading.Thread(target=start_inactive_peer_removal, daemon=True).start()
+
+    # Start the file receiver server in a separate thread
+    threading.Thread(target=PeerFileReceiver(store_folder="store").start, daemon=True).start()
 
     # Start the Flask app
     app.run(host="0.0.0.0", port=1108, debug=True)
