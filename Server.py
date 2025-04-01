@@ -169,7 +169,7 @@ def complete_transfer():
         return jsonify({"error": "Peer not found"}), 404
 
 websocket_peers = set()
-websocket_server_instance = None  # Global variable to store the WebSocket server instance
+websocket_server_instance = None
 
 async def websocket_handler(websocket, path):
     websocket_peers.add(websocket)
@@ -188,10 +188,10 @@ def start_websocket_server():
 
     async def run_server(port=6229):
         global websocket_server_instance
-        while is_port_in_use(port):  # Check if port is in use
+        while is_port_in_use(port):
             print(f"Port {port} is in use. Retrying with a different port...")
             port += 1
-            if port > 6300:  # Limit the port range
+            if port > 6300:
                 raise RuntimeError("No available ports for the WebSocket server.")
         try:
             websocket_server_instance = await websockets.serve(websocket_handler, "0.0.0.0", port)
@@ -210,9 +210,8 @@ def stop_websocket_server():
 def start_inactive_peer_removal():
     while True:
         tracker.remove_inactive_peers()
-        time.sleep(30)  # Check every 30 seconds
+        time.sleep(30)
 
-# Ensure folders exist
 if not os.path.exists("downloaded"):
     os.makedirs("downloaded")
 if not os.path.exists("uploaded"):
@@ -231,10 +230,10 @@ class PeerFileReceiver:
             os.makedirs(store_folder)
 
     def start(self):
-        while is_port_in_use(self.port):  # Check if port is in use
+        while is_port_in_use(self.port):
             print(f"Port {self.port} is in use. Retrying with a different port...")
             self.port += 1
-            if self.port > 6200:  # Limit the port range
+            if self.port > 6200:
                 raise RuntimeError("No available ports for the file receiver.")
         try:
             server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -250,18 +249,16 @@ class PeerFileReceiver:
 
     def _handle_client(self, client_socket, addr):
         try:
-            # Receive the file name (terminated by a newline)
             file_name = ""
             while True:
                 char = client_socket.recv(1).decode("utf-8")
-                if char == "\n":  # End of file name
+                if char == "\n":
                     break
                 file_name += char
 
             print(f"Receiving file: {file_name} from {addr}")
             file_path = os.path.join(self.store_folder, file_name)
 
-            # Receive the file content and save it
             with open(file_path, "wb") as f:
                 while True:
                     data = client_socket.recv(1024)
@@ -277,8 +274,8 @@ class PeerFileReceiver:
 if __name__ == "__main__":
     try:
         threading.Thread(target=start_inactive_peer_removal, daemon=True).start()
-        threading.Thread(target=PeerFileReceiver().start, daemon=True).start()  # Start file receiver
-        threading.Thread(target=start_websocket_server, daemon=True).start()  # Run WebSocket server in a separate thread
-        app.run(host="0.0.0.0", port=1108, debug=False, use_reloader=False)  # Disable debug mode
+        threading.Thread(target=PeerFileReceiver().start, daemon=True).start()
+        threading.Thread(target=start_websocket_server, daemon=True).start()
+        app.run(host="0.0.0.0", port=1108, debug=False, use_reloader=False)
     except KeyboardInterrupt:
-        stop_websocket_server()  # Ensure WebSocket server is stopped on exit
+        stop_websocket_server()

@@ -24,11 +24,11 @@ class PeerClient:
         self.read_lock = asyncio.Lock()
         self.server_thread = None
         self.peers = {}
-        self.request_files = request_files if request_files else []  # Thêm thuộc tính request_files
-        self.registered = False  # Cờ kiểm tra trạng thái đăng ký
-        self.heartbeat_task = None  # Quản lý heartbeat task
-        self.server_task = None  # Quản lý server task
-        self.main_task = None  # Quản lý task chính
+        self.request_files = request_files if request_files else []
+        self.registered = False
+        self.heartbeat_task = None
+        self.server_task = None
+        self.main_task = None
         if not os.path.exists("downloaded"):
             os.makedirs("downloaded")
 
@@ -43,7 +43,7 @@ class PeerClient:
 
     async def register_with_tracker(self):
         """Register the peer with the tracker."""
-        if self.registered:  # Kiểm tra nếu đã đăng ký thì không gửi lại yêu cầu
+        if self.registered:
             self.log(f"Already registered with tracker at {self.tracker_ip}:{self.tracker_port}")
             return
 
@@ -55,34 +55,30 @@ class PeerClient:
             "peer_ip": self.peer_ip,
             "file_sizes": file_sizes
         }
-        await self.send_to_tracker("/register", register_message)  # Gửi đến API /register
-        self.registered = True  # Đánh dấu đã đăng ký
+        await self.send_to_tracker("/register", register_message)
+        self.registered = True
         self.log(f"Registered with tracker at {self.tracker_ip}:{self.tracker_port}")
 
     async def connect_to_tracker(self):
         """Connect to the tracker and manage peer tasks."""
         try:
-            # Establish a connection to the tracker
             self.tracker_reader, self.tracker_writer = await asyncio.open_connection(self.tracker_ip, self.tracker_port)
 
-            # If no request_files, perform registration
             if not self.request_files:
                 await self.register_with_tracker()
 
-            # Start main tasks
             tasks = [
                 self.send_heartbeat(),
                 self.start_server(),
                 self.main_loop()
             ]
-            # If there are request_files, call request_files_from_peers
+            
             if self.request_files:
                 await self.request_files_from_peers()
             await asyncio.gather(*tasks)
         except Exception as e:
             self.log_error(f"Error in main tasks: {e}")
         finally:
-            # Close tracker connection on exit
             if self.tracker_writer:
                 self.tracker_writer.close()
                 await self.tracker_writer.wait_closed()
@@ -91,7 +87,7 @@ class PeerClient:
         """Main loop to keep the client running."""
         try:
             while True:
-                await asyncio.sleep(1)  # Giữ client hoạt động
+                await asyncio.sleep(1)
         except asyncio.CancelledError:
             self.log("Main loop cancelled. Exiting...")
 
@@ -104,10 +100,10 @@ class PeerClient:
         if response:
             file_peers = response.get('file_peer', [])
             file_sizes = response.get('file_sizes', {})
-            self.log(f"Tracker response for requested files: {response}")  # Log the response
+            self.log(f"Tracker response for requested files: {response}")
             if not file_peers:
                 self.log("No peers available for the requested files. Stopping requests.")
-                return  # Stop further requests to avoid infinite loop
+                return
             for file_name, peer in file_peers:
                 peer_ip, peer_port = peer['ip'], peer['port']
                 self.log(f"Requesting file {file_name} from peer {peer_ip}:{peer_port}...")
@@ -134,16 +130,13 @@ class PeerClient:
             str_message = json.dumps(message)
             self.log_message(f"Sending message to tracker ({endpoint}): {str_message}")
 
-            # Sử dụng HTTP client để gửi yêu cầu thay vì kết nối socket
             conn = http.client.HTTPConnection(self.tracker_ip, self.tracker_port)
             headers = {'Content-Type': 'application/json'}
             conn.request("POST", endpoint, body=str_message, headers=headers)
 
-            # Đọc phản hồi từ tracker
             response = conn.getresponse()
             response_data = response.read().decode('utf-8')
 
-            # Kiểm tra nếu phản hồi là JSON hợp lệ
             try:
                 json_response = json.loads(response_data)
                 self.log_message(f"Response from tracker ({endpoint}): {json_response}")
@@ -162,7 +155,6 @@ class PeerClient:
             response = await self.tracker_reader.readline()
             response_data = response.decode('utf-8').strip()
 
-            # Check if the response is valid JSON
             try:
                 json_response = json.loads(response_data)
                 self.log_message(f"Received message from tracker: {json_response}")
@@ -176,7 +168,6 @@ class PeerClient:
         request_message = {"type": "GET_N_FILE_IDLE_PEERS", "file_names": file_names, 'peer_ip': self.peer_ip, 'peer_port': self.peer_port}
         response_data = await self.send_to_tracker("/get_n_file_idle_peers", request_message)
         self.log(f"Send to tracker: {request_message}")
-        # response_data = await self.read_from_tracker()
         if response_data and response_data['type'] == 'PEERS_AVAILABLE':
             self.log(f"Received peers for files: {response_data['file_peer']}")
             return response_data
@@ -224,8 +215,8 @@ class PeerClient:
                     os.makedirs("downloaded")
                 with open(f"downloaded/{file_name}", 'wb') as file:
                     file.write(file_data)
-                self.log("File saved successfully. Exiting program.")  # Log thông báo thoát
-                os._exit(0)  # Thoát chương trình ngay lập tức
+                self.log("File saved successfully. Exiting program.")
+                os._exit(0)
             else:
                 self.log_error(f"Failed to receive {file_name} from {peer_ip}:{peer_port}. File data is empty.")
 
