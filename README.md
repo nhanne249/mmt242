@@ -1,35 +1,38 @@
-# Bài Tập Lớn Mạng Máy Tính
+# BitTorrent-Based P2P File Sharing System
 
-## Cách Cài Đặt Các Thư Viện Yêu Cầu
-Trước khi chạy chương trình, hãy đảm bảo rằng bạn đã cài đặt đầy đủ các thư viện yêu cầu. Sử dụng lệnh sau để cài đặt:
+## Overview
+This system implements a BitTorrent-based P2P file sharing system with a centralized tracker and peer nodes. It includes a GUI for managing shared files, downloads, and uploads.
+
+## Setup Instructions
+
+### 1. Start the Tracker
+Run the tracker on the designated VM:
 ```bash
-pip install -r requirements.txt
+python3 tracker.py --ip <TRACKER_IP> --port 6881
 ```
-Lệnh này sẽ tự động cài đặt tất cả các thư viện cần thiết được liệt kê trong file `requirements.txt`.
 
-## Cách Chạy Server
-Để khởi động server, sử dụng lệnh sau:
+### 2. Start a Peer Node
+Run the peer on another VM:
 ```bash
-python start_tracker
+python3 peer.py --ip <PEER_IP> --port 6882 --tracker-ip <TRACKER_IP> --tracker-port 6881
 ```
-Lệnh này khởi tạo server tracker, quản lý việc đăng ký các PEER và hỗ trợ chia sẻ file giữa chúng.
 
-## Cách Đăng Ký PEER Kèm File Đến Server
-Để đăng ký một PEER cùng với các file mà nó muốn chia sẻ, sử dụng lệnh sau:
-```bash
-python start_client.py --port 1109 --files fileA1.txt fileA2.txt --peer_name "PEER A"
-```
-- `--port 1109`: Chỉ định số cổng mà PEER sẽ sử dụng.
-- `--files fileA1.txt fileA2.txt`: Liệt kê các file mà PEER muốn chia sẻ.
-- `--peer_name "PEER A"`: Gán tên cho PEER để nhận diện.
+### 3. Use the GUI
+- Launch the GUI by running `gui.py`:
+  ```bash
+  python3 gui.py
+  ```
+- Use the GUI to:
+  - Add files to share.
+  - View available files from the tracker.
+  - Download files and monitor progress.
 
-## Cách Một PEER Lấy File Từ PEER Khác Qua Server
-Để yêu cầu file từ một PEER khác đang chia sẻ, sử dụng lệnh sau:
-```bash
-python start_client.py --port 1110 --peer_name "PEER B" --request_files fileA1.txt
-```
-- `--port 1110`: Chỉ định số cổng mà PEER yêu cầu sẽ sử dụng.
-- `--peer_name "PEER B"`: Gán tên cho PEER yêu cầu.
-- `--request_files fileA1.txt`: Chỉ định file mà PEER muốn lấy.
+## Testing
+1. Share files from one peer and register them with the tracker.
+2. Query the tracker from another peer to view available files.
+3. Download files concurrently from multiple peers.
+4. Verify file integrity using SHA-1 hashing.
 
-Hãy đảm bảo rằng server tracker đang chạy và PEER chia sẻ file được yêu cầu đã đăng ký với server trước khi thực hiện yêu cầu.
+## Notes
+- Ensure all VMs are on the same network and have unique IPs.
+- Use real IPs (e.g., 192.168.x.x) for all socket connections.

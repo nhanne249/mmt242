@@ -1,63 +1,93 @@
-from flask import Flask, request, jsonify
+import socket
+import threading
+import json
+import logging
 
-app = Flask(__name__)
+class Tracker:
+    def __init__(self, ip, port):
+        self.ip = ip
+        self.port = port
+        self.files = {}  # {filename: {chunk_index: [peer_ips]}}
+        self.lock = threading.Lock()
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# In-memory storage (file -> list of peers)
-files = {}  # Example: {"file1.txt": [{"ip": "192.168.1.2", "port": 5001}]}
+    def handle_client(self, conn, addr):
+        try:
+            data = self.receive_data(conn)
+            if not data:
+                logging.warning(f"Empty request from {addr}")
+                return
 
-# Register a new peer and its files
-@app.route("/register", methods=["POST"])
-def register_peer():
-    data = request.json  # Get JSON data from the peer
-    ip = data.get("ip")
-    port = data.get("port")
-    file_list = data.get("files", [])
+            request = json.loads(data)
+            action = request.get("action")
 
-    if not ip or not port or not file_list:
-        return jsonify({"error": "Missing parameters"}), 400
+            if action == "register":
+                self.register_file(request, addr[0])
+            elif action == "query":
+                response = self.query_file(request)
+                conn.send(json.dumps(response).encode())
+            elif action == "update":
+                self.update_chunks(request, addr[0])
+            else:
+                logging.warning(f"Unknown action '{action}' from {addr}")
+        except json.JSONDecodeError:
+            logging.error(f"Malformed request from {addr}")
+        except Exception as e:
+            logging.error(f"Error handling client {addr}: {e}")
+        finally:
+            conn.close()
 
-    # Store peer details for each file
-    for file in file_list:
-        if file not in files:
-            files[file] = []
-        peer_info = {"ip": ip, "port": port}
-        if peer_info not in files[file]:
-            files[file].append(peer_info)
+    def receive_data(self, conn):
+        """Receive data in chunks to handle larger payloads."""
+        data = b""
+        while True:
+            chunk = conn.recv(1024)
+            if not chunk:
+                break
+            data += chunk
+        return data.decode()
 
-    return jsonify({"message": "Peer registered successfully"}), 200
+    def register_file(self, request, peer_ip):
+        filename = request["filename"]
+        total_chunks = request["total_chunks"]
+        with self.lock:
+            if filename not in self.files:
+                self.files[filename] = {i: [] for i in range(total_chunks)}
+        logging.info(f"Registered file: {filename} from {peer_ip}")
 
-# Get the list of peers sharing a specific file
-@app.route("/peers", methods=["GET"])
-def get_peers():
-    file_name = request.args.get("file")
-    if not file_name or file_name not in files:
-        return jsonify({"error": "File not found"}), 404
+    def query_file(self, request):
+        filename = request["filename"]
+        with self.lock:
+            response = self.files.get(filename, {})
+        logging.info(f"Query for file: {filename}")
+        return response
 
-    return jsonify({"peers": files[file_name]}), 200
+    def update_chunks(self, request, peer_ip):
+        filename = request["filename"]
+        chunks = request["chunks"]
+        with self.lock:
+            for chunk in chunks:
+                if peer_ip not in self.files[filename][chunk]:
+                    self.files[filename][chunk].append(peer_ip)
+        logging.info(f"Updated chunks for {filename} from {peer_ip}")
 
-# Show all files currently tracked
-@app.route("/files", methods=["GET"])
-def list_files():
-    return jsonify({"tracked_files": list(files.keys())}), 200
+    def start(self):
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind((self.ip, self.port))
+        server.listen(5)
+        logging.info(f"Tracker running on {self.ip}:{self.port}")
 
-# Update peer status
-@app.route("/update_status", methods=["POST"])
-def update_status():
-    data = request.json
-    ip = data.get("ip")
-    port = data.get("port")
-    status = data.get("status")
-
-    if not ip or not port or not status:
-        return jsonify({"error": "Missing parameters"}), 400
-
-    for file, peers in files.items():
-        for peer in peers:
-            if peer["ip"] == ip and peer["port"] == port:
-                peer["status"] = status
-                return jsonify({"message": "Status updated successfully"}), 200
-
-    return jsonify({"error": "Peer not found"}), 404
+        while True:
+            conn, addr = server.accept()
+            logging.info(f"Connection from {addr}")
+            threading.Thread(target=self.handle_client, args=(conn, addr)).start()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000, debug=True)  # Run on port 8000
+    import argparse
+    parser = argparse.ArgumentParser(description="Tracker Server")
+    parser.add_argument("--ip", required=True, help="Tracker IP address")
+    parser.add_argument("--port", type=int, required=True, help="Tracker port")
+    args = parser.parse_args()
+
+    tracker = Tracker(args.ip, args.port)
+    tracker.start()
