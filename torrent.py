@@ -2,12 +2,13 @@ import os
 import hashlib
 import json
 import logging
+from config import TORRENT_MAX_SIZE_KB
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 class Torrent:
     @staticmethod
-    def create_torrent(filepath, tracker_ip, tracker_port, piece_size=1024 * 1024):
+    def create_torrent(filepath, tracker_ip, tracker_port, piece_size=None):
         """
         Create a .torrent metadata file for the given file.
         :param filepath: Path to the file to be shared.
@@ -19,6 +20,12 @@ class Torrent:
         if not os.path.exists(filepath):
             logging.error(f"File '{filepath}' does not exist.")
             raise FileNotFoundError(f"File '{filepath}' does not exist.")
+
+        # Use the maximum size from config if piece_size is not provided
+        piece_size = piece_size or (TORRENT_MAX_SIZE_KB * 1024)
+        if piece_size > TORRENT_MAX_SIZE_KB * 1024:
+            piece_size = TORRENT_MAX_SIZE_KB * 1024
+            logging.warning(f"Piece size exceeds maximum allowed size. Using {piece_size} bytes.")
 
         filename = os.path.basename(filepath)
         file_size = os.path.getsize(filepath)
@@ -40,7 +47,8 @@ class Torrent:
             "tracker": f"{tracker_ip}:{tracker_port}"
         }
 
-        torrent_file = f"{filename}.torrent"
+        torrent_file = os.path.join("data", f"{filename}.torrent")
+        os.makedirs("data", exist_ok=True)  # Ensure the 'data' directory exists
         try:
             with open(torrent_file, "w") as f:
                 json.dump(metadata, f, indent=4)

@@ -1,7 +1,7 @@
 import sys
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QPushButton,
-    QLabel, QProgressBar, QListWidget, QFileDialog, QLineEdit
+    QLabel, QProgressBar, QListWidget, QFileDialog, QLineEdit, QScrollArea
 )
 from PyQt5.QtCore import Qt
 import threading
@@ -14,6 +14,8 @@ class P2PGUI(QMainWindow):
         super().__init__()
         self.peer = peer
         self.init_ui()
+        self.download_progress_bars = {}  # Track progress bars for each file
+        self.download_status_labels = {}  # Track status labels for each file
 
     def init_ui(self):
         self.setWindowTitle("P2P File Sharing System")
@@ -44,15 +46,26 @@ class P2PGUI(QMainWindow):
         available_files_layout.addWidget(self.available_files_list)
         available_files_layout.addWidget(download_button)
 
-        # Download Manager
-        download_manager_label = QLabel("Download Manager")
-        self.download_progress = QProgressBar()
-        self.download_status = QLabel("Status: Idle")
+        # Remove the button for loading .torrent files
+        # Automatically fetch .torrent files when a file is selected for download
+        download_button.clicked.connect(self.download_selected_files)
 
+        # Download Manager (Updated for multiple files)
+        download_manager_label = QLabel("Download Manager")
+        self.download_manager_layout = QVBoxLayout()
+        self.download_manager_layout.addWidget(download_manager_label)
+
+        # Add a scrollable area for multiple downloads
+        self.download_manager_widget = QWidget()
+        self.download_manager_widget.setLayout(self.download_manager_layout)
+        self.download_manager_scroll = QScrollArea()
+        self.download_manager_scroll.setWidget(self.download_manager_widget)
+        self.download_manager_scroll.setWidgetResizable(True)
+
+        # Replace the single progress bar and status label with the scrollable area
         download_manager_layout = QVBoxLayout()
         download_manager_layout.addWidget(download_manager_label)
-        download_manager_layout.addWidget(self.download_progress)
-        download_manager_layout.addWidget(self.download_status)
+        download_manager_layout.addWidget(self.download_manager_scroll)
 
         # Settings Panel
         settings_label = QLabel("Settings")
@@ -96,14 +109,36 @@ class P2PGUI(QMainWindow):
             filename = item.text()
             tracker_ip = self.tracker_ip_input.text()
             tracker_port = int(self.tracker_port_input.text())
+
+            # Query tracker for peers sharing the file
             peer_list = self.peer.query_tracker(filename)
-            threading.Thread(target=self.peer.download_file, args=(filename, peer_list)).start()
-            self.download_status.setText(f"Downloading: {filename}")
+
+            # Fetch the .torrent file from one of the peers
+            if peer_list:
+                torrent_file = self.peer.fetch_torrent(filename, peer_list[0])
+                if torrent_file:
+                    # Add progress bar and status label for the file
+                    progress_bar = QProgressBar()
+                    status_label = QLabel(f"Status: Downloading {filename}")
+                    self.download_manager_layout.addWidget(progress_bar)
+                    self.download_manager_layout.addWidget(status_label)
+
+                    self.download_progress_bars[filename] = progress_bar
+                    self.download_status_labels[filename] = status_label
+
+                    # Start the download in a separate thread
+                    threading.Thread(target=self.start_download, args=(torrent_file, filename)).start()
+                else:
+                    logging.error(f"Failed to fetch .torrent file for '{filename}'.")
+            else:
+                logging.error(f"No peers found for '{filename}'.")
         logging.info(f"Started downloading files: {[item.text() for item in selected_items]}")
 
-    def update_download_progress(self, progress):
-        """Update the download progress bar."""
-        self.download_progress.setValue(progress)
+    def start_download(self, torrent_file, filename):
+        """Start downloading a file and update the progress bar."""
+        self.peer.download_torrent(torrent_file)
+        self.download_status_labels[filename].setText(f"Status: Completed {filename}")
+        self.download_progress_bars[filename].setValue(100)
 
 if __name__ == "__main__":
     from peer import Peer
