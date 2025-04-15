@@ -7,10 +7,13 @@ from config import TORRENT_MAX_SIZE_KB
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 class Torrent:
+    """
+    Lớp này cung cấp các tiện ích để tạo và phân tích tệp .torrent.
+    """
     @staticmethod
     def create_torrent(filepath, tracker_ip, tracker_port, piece_size=None):
         """
-        Create a .torrent metadata file for the given file.
+        Tạo một tệp metadata .torrent cho tệp được chỉ định.
         :param filepath: Path to the file to be shared.
         :param tracker_ip: IP address of the tracker.
         :param tracker_port: Port of the tracker.
@@ -21,7 +24,6 @@ class Torrent:
             logging.error(f"File '{filepath}' does not exist.")
             raise FileNotFoundError(f"File '{filepath}' does not exist.")
 
-        # Use the maximum size from config if piece_size is not provided
         piece_size = piece_size or (TORRENT_MAX_SIZE_KB * 1024)
         if piece_size > TORRENT_MAX_SIZE_KB * 1024:
             piece_size = TORRENT_MAX_SIZE_KB * 1024
@@ -48,7 +50,7 @@ class Torrent:
         }
 
         torrent_file = os.path.join("data", f"{filename}.torrent")
-        os.makedirs("data", exist_ok=True)  # Ensure the 'data' directory exists
+        os.makedirs("data", exist_ok=True)
         try:
             with open(torrent_file, "w") as f:
                 json.dump(metadata, f, indent=4)
@@ -62,9 +64,7 @@ class Torrent:
     @staticmethod
     def parse_torrent(torrent_file):
         """
-        Parse a .torrent metadata file.
-        :param torrent_file: Path to the .torrent file.
-        :return: Metadata dictionary.
+        Phân tích một tệp .torrent và trả về metadata.
         """
         if not os.path.exists(torrent_file):
             logging.error(f"Torrent file '{torrent_file}' does not exist.")
@@ -83,10 +83,8 @@ class Torrent:
 
         return metadata
 
-# Example usage
 if __name__ == "__main__":
     try:
-        # Create a .torrent file
         metadata = Torrent.create_torrent(
             filepath="path/to/file",
             tracker_ip="192.168.1.1",
@@ -94,7 +92,6 @@ if __name__ == "__main__":
         )
         print("Created .torrent metadata:", metadata)
 
-        # Parse a .torrent file
         parsed_metadata = Torrent.parse_torrent("file.torrent")
         print("Parsed .torrent metadata:", parsed_metadata)
     except Exception as e:

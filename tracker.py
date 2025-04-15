@@ -5,26 +5,32 @@ import logging
 import os
 from colorama import Fore, Style
 
-# Configure logging to display logs in the console
 logging.basicConfig(
-    level=logging.INFO,  # Set the logging level to INFO
+    level=logging.INFO,
     format=f"{Fore.CYAN}%(asctime)s{Style.RESET_ALL} - %(levelname)s - %(message)s"
 )
 
-# Example log to verify logging setup
 logging.info("Tracker logging initialized.")
 
 class Tracker:
+    """
+    Lớp này đại diện cho Tracker, quản lý metadata của các tệp và thông tin của các peer.
+    """
     def __init__(self, ip, port):
+        """
+        Khởi tạo Tracker với địa chỉ IP và cổng.
+        """
         self.ip = ip
         self.port = port
-        self.files = {}  # {filename: {chunk_index: [peer_ips]}}
+        self.files = {}
         self.lock = threading.Lock()
-        self.temp_file = "temp.json"  # File to store tracker data persistently
+        self.temp_file = "temp.json"
         self.load_files_from_temp()
 
     def load_files_from_temp(self):
-        """Load tracker data from the temp.json file."""
+        """
+        Tải dữ liệu tạm thời từ tệp temp.json nếu tồn tại.
+        """
         if os.path.exists(self.temp_file):
             try:
                 with open(self.temp_file, "r") as f:
@@ -34,7 +40,9 @@ class Tracker:
                 logging.error(f"Failed to load tracker data from temp.json: {e}")
 
     def save_files_to_temp(self):
-        """Save tracker data to the temp.json file."""
+        """
+        Lưu dữ liệu hiện tại vào tệp temp.json.
+        """
         try:
             with open(self.temp_file, "w") as f:
                 json.dump(self.files, f)
@@ -43,10 +51,13 @@ class Tracker:
             logging.error(f"Failed to save tracker data to temp.json: {e}")
 
     def handle_client(self, conn, addr):
-        logging.info(f"New connection from {addr}")  # Log every new connection
+        """
+        Xử lý yêu cầu từ một peer client.
+        """
+        logging.info(f"New connection from {addr}")
         try:
             data = self.receive_data(conn)
-            logging.info(f"Received raw data from {addr}: {data}")  # Log the raw data received from the client
+            logging.info(f"Received raw data from {addr}: {data}")
             if not data:
                 logging.warning(f"Empty request from {addr}")
                 response = {"status": "error", "message": "Empty request"}
@@ -82,11 +93,12 @@ class Tracker:
             logging.info(f"Connection with {addr} closed")
 
     def receive_data(self, conn):
-        """Receive metadata and update chunk information."""
-        buffer_size = 1024  # Default buffer size
+        """
+        Nhận dữ liệu từ kết nối socket.
+        """
+        buffer_size = 1024
 
         try:
-            # Step 1: Receive metadata (e.g., action, filename, total_chunks)
             metadata = conn.recv(buffer_size).decode()
             logging.info(f"Received metadata: {metadata}")
 
@@ -95,14 +107,12 @@ class Tracker:
             filename = metadata_json.get("filename")
             peer_ip = metadata_json.get("peer_ip")
 
-            # Validate filename and peer_ip
             if filename == "unknown" or peer_ip == "unknown":
                 logging.warning(f"Invalid metadata received: filename='{filename}', peer_ip='{peer_ip}'")
                 return None
 
             logging.info(f"Registering file '{filename}' with {total_chunks} chunks from peer {peer_ip}.")
 
-            # Step 2: Update tracker information for the file and chunks
             with self.lock:
                 if filename not in self.files:
                     self.files[filename] = {i: [] for i in range(total_chunks)}
@@ -112,17 +122,19 @@ class Tracker:
                         self.files[filename][chunk_index].append(peer_ip)
                         logging.info(f"Chunk {chunk_index} of file '{filename}' registered for peer {peer_ip}.")
 
-            return metadata_json  # Return the parsed metadata
+            return metadata_json
 
         except Exception as e:
             logging.error(f"Error while receiving data: {e}")
             return None
 
     def register_file(self, request, peer_ip):
+        """
+        Đăng ký một tệp mới với Tracker.
+        """
         filename = request.get("filename")
         total_chunks = request.get("total_chunks")
 
-        # Validate filename and total_chunks
         if not filename or filename == "unknown" or not isinstance(total_chunks, int):
             logging.warning(f"Invalid file registration attempt: filename='{filename}', total_chunks='{total_chunks}'")
             return {"status": "error", "message": "Invalid file registration"}
@@ -134,11 +146,14 @@ class Tracker:
                 if peer_ip not in self.files[filename][chunk_index]:
                     self.files[filename][chunk_index].append(peer_ip)
 
-        self.save_files_to_temp()  # Save updated data to temp.json
+        self.save_files_to_temp()
         logging.info(f"File '{filename}' registered with {total_chunks} chunks by {peer_ip}")
         return {"status": "success", "filename": filename}
 
     def query_file(self, request):
+        """
+        Truy vấn thông tin về một tệp cụ thể.
+        """
         filename = request["filename"]
         with self.lock:
             file_info = self.files.get(filename, None)
@@ -147,7 +162,9 @@ class Tracker:
         return {"status": "success", "file_info": file_info}
 
     def update_chunks(self, request, peer_ip):
-        """Update the tracker with chunks downloaded by a peer."""
+        """
+        Cập nhật thông tin các chunk của tệp từ một peer.
+        """
         filename = request["filename"]
         chunks = request["chunks"]
         with self.lock:
@@ -160,12 +177,14 @@ class Tracker:
                 if peer_ip not in self.files[filename][chunk_index]:
                     self.files[filename][chunk_index].append(peer_ip)
 
-        self.save_files_to_temp()  # Save updated data to temp.json
+        self.save_files_to_temp()
         logging.info(f"Updated chunks for '{filename}' from peer {peer_ip}.")
         return {"status": "success"}
 
     def register_torrent(self, request, peer_ip):
-        """Register a file using .torrent metadata."""
+        """
+        Đăng ký một tệp .torrent với Tracker.
+        """
         filename = request["filename"]
         pieces = request["pieces"]
         with self.lock:
@@ -174,7 +193,9 @@ class Tracker:
         log_message('INFO', f"Registered .torrent file: {filename} from {peer_ip}")
 
     def query_torrent(self, request):
-        """Query the tracker for peers using .torrent metadata."""
+        """
+        Truy vấn thông tin về một tệp .torrent.
+        """
         filename = request["filename"]
         with self.lock:
             response = self.files.get(filename, {})
@@ -182,12 +203,17 @@ class Tracker:
         return response
 
     def list_files(self):
-        """Return a list of all files currently tracked."""
+        """
+        Liệt kê tất cả các tệp đã được đăng ký với Tracker.
+        """
         with self.lock:
             file_list = list(self.files.keys())
         return {"status": "success", "files": file_list}
 
     def start(self):
+        """
+        Bắt đầu Tracker và lắng nghe các kết nối từ các peer.
+        """
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server.bind((self.ip, self.port))
         server.listen(5)
