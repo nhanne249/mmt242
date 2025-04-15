@@ -2,7 +2,17 @@ import socket
 import threading
 import json
 import logging
+import os
 from colorama import Fore, Style
+
+# Configure logging to display logs in the console
+logging.basicConfig(
+    level=logging.INFO,  # Set the logging level to INFO
+    format=f"{Fore.CYAN}%(asctime)s{Style.RESET_ALL} - %(levelname)s - %(message)s"
+)
+
+# Example log to verify logging setup
+logging.info("Tracker logging initialized.")
 
 class Tracker:
     def __init__(self, ip, port):
@@ -10,79 +20,149 @@ class Tracker:
         self.port = port
         self.files = {}  # {filename: {chunk_index: [peer_ips]}}
         self.lock = threading.Lock()
-        logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+        self.temp_file = "temp.json"  # File to store tracker data persistently
+        self.load_files_from_temp()
+
+    def load_files_from_temp(self):
+        """Load tracker data from the temp.json file."""
+        if os.path.exists(self.temp_file):
+            try:
+                with open(self.temp_file, "r") as f:
+                    self.files = json.load(f)
+                logging.info("Loaded tracker data from temp.json.")
+            except Exception as e:
+                logging.error(f"Failed to load tracker data from temp.json: {e}")
+
+    def save_files_to_temp(self):
+        """Save tracker data to the temp.json file."""
+        try:
+            with open(self.temp_file, "w") as f:
+                json.dump(self.files, f)
+            logging.info("Saved tracker data to temp.json.")
+        except Exception as e:
+            logging.error(f"Failed to save tracker data to temp.json: {e}")
 
     def handle_client(self, conn, addr):
-        log_message('INFO', f"Handling client {addr}")  # Log interaction with peer
+        logging.info(f"New connection from {addr}")  # Log every new connection
         try:
             data = self.receive_data(conn)
+            logging.info(f"Received raw data from {addr}: {data}")  # Log the raw data received from the client
             if not data:
-                log_message('WARNING', f"Empty request from {addr}")
+                logging.warning(f"Empty request from {addr}")
+                response = {"status": "error", "message": "Empty request"}
+                conn.send(json.dumps(response).encode())
                 return
 
-            request = json.loads(data)
-            action = request.get("action")
+            action = data.get("action")
 
-            if action == "register_torrent":
-                log_message('INFO', f"Action: register_torrent from {addr}")  # Log action
-                self.register_torrent(request, addr[0])
-            elif action == "query_torrent":
-                log_message('INFO', f"Action: query_torrent from {addr}")  # Log action
-                response = self.query_torrent(request)
-                conn.send(json.dumps(response).encode())
-            elif action == "register":
-                log_message('INFO', f"Action: register from {addr}")  # Log action
-                self.register_file(request, addr[0])
+            if action == "register":
+                response = self.register_file(data, addr[0])
             elif action == "query":
-                log_message('INFO', f"Action: query from {addr}")  # Log action
-                response = self.query_file(request)
-                conn.send(json.dumps(response).encode())
+                response = self.query_file(data)
+            elif action == "list_files":
+                response = self.list_files()
             elif action == "update":
-                log_message('INFO', f"Action: update from {addr}")  # Log action
-                self.update_chunks(request, addr[0])
+                response = self.update_chunks(data, addr[0])
             else:
-                log_message('WARNING', f"Unknown action '{action}' from {addr}")
+                response = {"status": "error", "message": "Unknown action"}
+                logging.warning(f"Unknown action '{action}' from {addr}")
+
+            conn.send(json.dumps(response).encode())
+            logging.info(f"Response sent to peer {addr}: {response}")
         except json.JSONDecodeError:
-            log_message('ERROR', f"Malformed request from {addr}")
+            logging.error(f"Malformed request from {addr}")
+            response = {"status": "error", "message": "Malformed request"}
+            conn.send(json.dumps(response).encode())
         except Exception as e:
-            log_message('ERROR', f"Error handling client {addr}: {e}")
+            logging.error(f"Error handling client {addr}: {e}")
+            response = {"status": "error", "message": str(e)}
+            conn.send(json.dumps(response).encode())
         finally:
             conn.close()
-            log_message('INFO', f"Connection with {addr} closed")  # Log connection closure
+            logging.info(f"Connection with {addr} closed")
 
     def receive_data(self, conn):
-        """Receive data in chunks to handle larger payloads."""
-        data = b""
-        while True:
-            chunk = conn.recv(1024)
-            if not chunk:
-                break
-            data += chunk
-        return data.decode()
+        """Receive metadata and update chunk information."""
+        buffer_size = 1024  # Default buffer size
+
+        try:
+            # Step 1: Receive metadata (e.g., action, filename, total_chunks)
+            metadata = conn.recv(buffer_size).decode()
+            logging.info(f"Received metadata: {metadata}")
+
+            metadata_json = json.loads(metadata)
+            total_chunks = metadata_json.get("total_chunks")
+            filename = metadata_json.get("filename")
+            peer_ip = metadata_json.get("peer_ip")
+
+            # Validate filename and peer_ip
+            if filename == "unknown" or peer_ip == "unknown":
+                logging.warning(f"Invalid metadata received: filename='{filename}', peer_ip='{peer_ip}'")
+                return None
+
+            logging.info(f"Registering file '{filename}' with {total_chunks} chunks from peer {peer_ip}.")
+
+            # Step 2: Update tracker information for the file and chunks
+            with self.lock:
+                if filename not in self.files:
+                    self.files[filename] = {i: [] for i in range(total_chunks)}
+
+                for chunk_index in range(total_chunks):
+                    if peer_ip not in self.files[filename][chunk_index]:
+                        self.files[filename][chunk_index].append(peer_ip)
+                        logging.info(f"Chunk {chunk_index} of file '{filename}' registered for peer {peer_ip}.")
+
+            return metadata_json  # Return the parsed metadata
+
+        except Exception as e:
+            logging.error(f"Error while receiving data: {e}")
+            return None
 
     def register_file(self, request, peer_ip):
-        filename = request["filename"]
-        total_chunks = request["total_chunks"]
+        filename = request.get("filename")
+        total_chunks = request.get("total_chunks")
+
+        # Validate filename and total_chunks
+        if not filename or filename == "unknown" or not isinstance(total_chunks, int):
+            logging.warning(f"Invalid file registration attempt: filename='{filename}', total_chunks='{total_chunks}'")
+            return {"status": "error", "message": "Invalid file registration"}
+
         with self.lock:
             if filename not in self.files:
                 self.files[filename] = {i: [] for i in range(total_chunks)}
-        log_message('INFO', f"Registered file: {filename} from {peer_ip}")
+            for chunk_index in range(total_chunks):
+                if peer_ip not in self.files[filename][chunk_index]:
+                    self.files[filename][chunk_index].append(peer_ip)
+
+        self.save_files_to_temp()  # Save updated data to temp.json
+        logging.info(f"File '{filename}' registered with {total_chunks} chunks by {peer_ip}")
+        return {"status": "success", "filename": filename}
 
     def query_file(self, request):
         filename = request["filename"]
         with self.lock:
-            response = self.files.get(filename, {})
-        log_message('INFO', f"Query for file: {filename}")
-        return response
+            file_info = self.files.get(filename, None)
+        if file_info is None:
+            return {"status": "error", "message": "File not found"}
+        return {"status": "success", "file_info": file_info}
 
     def update_chunks(self, request, peer_ip):
+        """Update the tracker with chunks downloaded by a peer."""
         filename = request["filename"]
         chunks = request["chunks"]
         with self.lock:
+            if filename not in self.files:
+                logging.warning(f"File '{filename}' not found in tracker.")
+                return {"status": "error", "message": "File not found"}
+
             for chunk in chunks:
-                if peer_ip not in self.files[filename][chunk]:
-                    self.files[filename][chunk].append(peer_ip)
-        log_message('INFO', f"Updated chunks for {filename} from {peer_ip}")
+                chunk_index = int(chunk)
+                if peer_ip not in self.files[filename][chunk_index]:
+                    self.files[filename][chunk_index].append(peer_ip)
+
+        self.save_files_to_temp()  # Save updated data to temp.json
+        logging.info(f"Updated chunks for '{filename}' from peer {peer_ip}.")
+        return {"status": "success"}
 
     def register_torrent(self, request, peer_ip):
         """Register a file using .torrent metadata."""
@@ -100,6 +180,12 @@ class Tracker:
             response = self.files.get(filename, {})
         log_message('INFO', f"Query for .torrent file: {filename}")
         return response
+
+    def list_files(self):
+        """Return a list of all files currently tracked."""
+        with self.lock:
+            file_list = list(self.files.keys())
+        return {"status": "success", "files": file_list}
 
     def start(self):
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

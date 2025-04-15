@@ -3,19 +3,28 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QPushButton,
     QLabel, QProgressBar, QListWidget, QFileDialog, QLineEdit, QScrollArea
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QMetaObject, pyqtSignal
 import threading
 import logging
+import argparse
+import json
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 class P2PGUI(QMainWindow):
+    save_path_requested = pyqtSignal(str, name="savePathRequested")
+
     def __init__(self, peer):
         super().__init__()
         self.peer = peer
+        self.tracker_ip = peer.tracker_ip  # Use tracker IP from peer
+        self.tracker_port = peer.tracker_port  # Use tracker port from peer
         self.init_ui()
         self.download_progress_bars = {}  # Track progress bars for each file
         self.download_status_labels = {}  # Track status labels for each file
+
+        # Connect the signal to the slot
+        self.save_path_requested.connect(self.get_save_path)
 
     def init_ui(self):
         self.setWindowTitle("P2P File Sharing System")
@@ -38,12 +47,17 @@ class P2PGUI(QMainWindow):
         # Available Files Panel
         available_files_label = QLabel("Available Files")
         self.available_files_list = QListWidget()
-        download_button = QPushButton("Download Selected")
-        download_button.clicked.connect(self.download_selected_files)
+        refresh_button = QPushButton("Refresh")
+        refresh_button.clicked.connect(self.refresh_available_files)
 
         available_files_layout = QVBoxLayout()
         available_files_layout.addWidget(available_files_label)
         available_files_layout.addWidget(self.available_files_list)
+        available_files_layout.addWidget(refresh_button)
+
+        download_button = QPushButton("Download Selected")
+        download_button.clicked.connect(self.download_selected_files)
+
         available_files_layout.addWidget(download_button)
 
         # Remove the button for loading .torrent files
@@ -67,18 +81,6 @@ class P2PGUI(QMainWindow):
         download_manager_layout.addWidget(download_manager_label)
         download_manager_layout.addWidget(self.download_manager_scroll)
 
-        # Settings Panel
-        settings_label = QLabel("Settings")
-        self.tracker_ip_input = QLineEdit()
-        self.tracker_ip_input.setPlaceholderText("Tracker IP")
-        self.tracker_port_input = QLineEdit()
-        self.tracker_port_input.setPlaceholderText("Tracker Port")
-
-        settings_layout = QVBoxLayout()
-        settings_layout.addWidget(settings_label)
-        settings_layout.addWidget(self.tracker_ip_input)
-        settings_layout.addWidget(self.tracker_port_input)
-
         # Combine layouts
         top_layout = QHBoxLayout()
         top_layout.addLayout(shared_files_layout)
@@ -86,7 +88,6 @@ class P2PGUI(QMainWindow):
 
         main_layout.addLayout(top_layout)
         main_layout.addLayout(download_manager_layout)
-        main_layout.addLayout(settings_layout)
 
         # Set central widget
         central_widget = QWidget()
@@ -95,58 +96,142 @@ class P2PGUI(QMainWindow):
 
     def add_files(self):
         """Add files to share."""
+        logging.info("Add Files button clicked.")
         file_dialog = QFileDialog()
         file_paths, _ = file_dialog.getOpenFileNames(self, "Select Files to Share")
-        for file_path in file_paths:
-            self.peer.register_file(file_path)
-            self.shared_files_list.addItem(file_path)
-        logging.info(f"Added files for sharing: {file_paths}")
+        logging.info(f"Files selected: {file_paths}")
+
+        def process_files():
+            for file_path in file_paths:
+                try:
+                    logging.info(f"Attempting to register file: {file_path}")
+                    filename = self.peer.register_file(file_path)  # Register file with tracker
+                    if filename:
+                        logging.info(f"File registered successfully: {filename}")
+                        # Update GUI directly on the main thread
+                        self.shared_files_list.addItem(filename)
+                        logging.info(f"Successfully updated GUI with filename: {filename}")
+                    else:
+                        logging.error(f"Failed to register file: {file_path}")
+                except Exception as e:
+                    logging.error(f"Exception occurred while adding file '{file_path}': {e}")
+
+        threading.Thread(target=process_files).start()
 
     def download_selected_files(self):
         """Download selected files from the available files list."""
         selected_items = self.available_files_list.selectedItems()
         for item in selected_items:
             filename = item.text()
-            tracker_ip = self.tracker_ip_input.text()
-            tracker_port = int(self.tracker_port_input.text())
+
+            # Check if the file is already being downloaded
+            if filename in self.download_progress_bars:
+                logging.warning(f"Download for '{filename}' is already in progress.")
+                continue
 
             # Query tracker for peers sharing the file
-            peer_list = self.peer.query_tracker(filename)
+            response = self.peer.query_tracker(filename)
+            if response.get("status") == "success":
+                peer_chunks = response.get("file_info", {})
 
-            # Fetch the .torrent file from one of the peers
-            if peer_list:
-                torrent_file = self.peer.fetch_torrent(filename, peer_list[0])
-                if torrent_file:
-                    # Add progress bar and status label for the file
-                    progress_bar = QProgressBar()
-                    status_label = QLabel(f"Status: Downloading {filename}")
-                    self.download_manager_layout.addWidget(progress_bar)
-                    self.download_manager_layout.addWidget(status_label)
+                # Add progress bar and status label for the file
+                progress_bar = QProgressBar()
+                status_label = QLabel(f"Status: Downloading {filename}")
+                self.download_manager_layout.addWidget(progress_bar)
+                self.download_manager_layout.addWidget(status_label)
 
-                    self.download_progress_bars[filename] = progress_bar
-                    self.download_status_labels[filename] = status_label
+                self.download_progress_bars[filename] = progress_bar
+                self.download_status_labels[filename] = status_label
 
-                    # Start the download in a separate thread
-                    threading.Thread(target=self.start_download, args=(torrent_file, filename)).start()
-                else:
-                    logging.error(f"Failed to fetch .torrent file for '{filename}'.")
+                # Start the download in a separate thread
+                threading.Thread(target=self.start_download, args=(filename,)).start()
             else:
-                logging.error(f"No peers found for '{filename}'.")
-        logging.info(f"Started downloading files: {[item.text() for item in selected_items]}")
+                logging.error(f"Failed to query tracker for '{filename}': {response.get('message')}.")
 
-    def start_download(self, torrent_file, filename):
-        """Start downloading a file and update the progress bar."""
-        self.peer.download_torrent(torrent_file)
-        self.download_status_labels[filename].setText(f"Status: Completed {filename}")
-        self.download_progress_bars[filename].setValue(100)
+    def get_save_path(self, filename):
+        """Slot to open QFileDialog and get the save path."""
+        save_path, _ = QFileDialog.getSaveFileName(self, "Save File As", filename)
+        self.save_path = save_path
 
-if __name__ == "__main__":
+    def start_download(self, filename):
+        """Start downloading the selected file."""
+        try:
+            # Query tracker for file info
+            request = {"action": "query", "filename": filename}
+            response = self.peer.send_to_tracker(request)
+            file_info = json.loads(response).get("file_info", {})
+
+            if not file_info:
+                logging.error(f"No file info found for '{filename}'.")
+                return
+
+            # Emit signal to request save path on the main thread
+            self.save_path = None
+            self.save_path_requested.emit(filename)
+
+            # Wait for the save path to be set
+            while self.save_path is None:
+                QApplication.processEvents()
+
+            if not self.save_path:
+                logging.warning("Download canceled by user.")
+                return
+
+            # Initialize progress bar
+            total_chunks = len(file_info)
+            self.download_progress_bars[filename].setMaximum(total_chunks)
+
+            # Define a callback to update the progress bar
+            def update_progress(current_chunks, total_chunks):
+                self.download_progress_bars[filename].setValue(current_chunks)
+
+            # Start the download with the progress callback
+            self.peer.download_file(filename, file_info, self.save_path, update_progress)
+
+            # Remove progress bar and status label after download completes
+            self.download_manager_layout.removeWidget(self.download_progress_bars[filename])
+            self.download_manager_layout.removeWidget(self.download_status_labels[filename])
+            self.download_progress_bars[filename].deleteLater()
+            self.download_status_labels[filename].deleteLater()
+
+            del self.download_progress_bars[filename]
+            del self.download_status_labels[filename]
+        except Exception as e:
+            logging.error(f"Error starting download for '{filename}': {e}")
+
+    def refresh_available_files(self):
+        """Query the tracker for available files and update the list."""
+        request = {"action": "list_files"}
+        response = self.peer.send_to_tracker(request)
+
+        if response:
+            response_data = json.loads(response)
+            if response_data.get("status") == "success":
+                files = response_data.get("files", [])
+                self.available_files_list.clear()
+                for file in files:
+                    self.available_files_list.addItem(file)
+                logging.info("Available files updated.")
+            else:
+                logging.error(f"Failed to fetch available files: {response_data.get('message')}.")
+        else:
+            logging.error("No response from tracker while fetching available files.")
+
+def main():
+    parser = argparse.ArgumentParser(description="GUI for P2P File Sharing System")
+    parser.add_argument("--peer-ip", required=True, help="IP address of the peer to connect to")
+    parser.add_argument("--peer-port", type=int, required=True, help="Port of the peer to connect to")
+    args = parser.parse_args()
+
     from peer import Peer
 
     # Example peer setup
-    peer = Peer(ip="192.168.1.2", port=6882, tracker_ip="192.168.1.1", tracker_port=6881)
+    peer = Peer(ip=args.peer_ip, port=args.peer_port, tracker_ip="192.168.0.5", tracker_port=6881)
 
     app = QApplication(sys.argv)
     gui = P2PGUI(peer)
     gui.show()
     sys.exit(app.exec_())
+
+if __name__ == "__main__":
+    main()
