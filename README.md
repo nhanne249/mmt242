@@ -64,7 +64,7 @@ python peer.py --ip 192.168.1.101 --port 6882 --tracker-ip 192.168.1.100 --track
 ### Khởi Động GUI
 Chạy GUI trên bất kỳ máy nào có một peer đang chạy:
 ```bash
-python gui.py --peer-ip 192.168.1.101 --peer-port 6882
+python gui.py --peer-ip 192.168.188.141 --peer-port 6882 --tracker-ip 192.168.188.61 --tracker-port 6881
 ```
 GUI sẽ kết nối với peer và cho phép bạn chia sẻ và tải xuống tệp.
 

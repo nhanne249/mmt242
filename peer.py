@@ -173,6 +173,8 @@ class Peer:
         """
         try:
             logging.info(f"Sending request to tracker: {request}")
+            logging.info(f"{self.tracker_ip}")
+            logging.info(f"{self.tracker_port}")
             conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             conn.connect((self.tracker_ip, self.tracker_port))
             conn.sendall(json.dumps(request).encode())
